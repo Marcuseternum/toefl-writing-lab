@@ -1,0 +1,6 @@
+interface:
+  display_name: "托福写作教练"
+  short_description: "在 Codex 中完成邮件与学术讨论练习、评分、保存和重写复盘"
+  default_prompt: "使用 $toefl-writing-coach 给我安排一次邮件写作练习，写完后按公开标准评分并保存反馈。"
+policy:
+  allow_implicit_invocation: true

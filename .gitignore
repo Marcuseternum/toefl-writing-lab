@@ -1,0 +1,34 @@
+# Credentials and local configuration
+.env
+.env.*
+*.env
+*credentials*
+*secrets*
+*.pem
+*.key
+*.p12
+.codex/
+# Learner records, generated reports, runtime state
+.local/
+work/
+data/
+backups/
+recordings/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.log
+*.err
+*.wav
+*.mp3
+*.m4a
+*.zip
+# Dependencies and editor state
+node_modules/
+coverage/
+.vscode/
+.DS_Store
+Thumbs.db
