@@ -77,3 +77,7 @@ npm test
 - [ETS教师练习材料](https://www.ets.org/content/dam/ets-org/pdfs/toefl/toefl-ibt-teachers-resources-practice-test-1.pdf)
 
 官方材料通过链接访问，不随仓库打包。
+
+## 开源许可证
+
+项目原创代码、文档和内置原创模拟题采用 [MIT License](LICENSE)，可使用、修改和再分发。链接指向的 ETS 材料及其他第三方内容保留各自的权利，不属于本项目的 MIT 授权范围。
