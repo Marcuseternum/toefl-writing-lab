@@ -24,6 +24,31 @@ test('GPT and Claude retain separate credentials; clearing or editing one leaves
  assert.throws(()=>p.set({profile_id:'unknown',apiKey:'bad'}));assert.throws(()=>p.set({profile_id:'claude',base:'https://other.example/v1'}),/重新填写/);
  assert.equal(p.get().profile_id,'gpt');p.clear('gpt');assert.throws(()=>p.resolve('gpt'));assert.equal(p.resolve('claude').apiKey,'fixture-claude-key');assert.equal(p.get('claude').hasKey,true);
 });
+
+test('non-GPT services and custom endpoints grade without a GPT credential',async()=>{
+ const store=createStore(':memory:'),provider=createProviderRegistry(),calls=[];
+ const services=[['deepseek','deepseek-chat','https://api.deepseek.com/v1/chat/completions'],['qwen','qwen-plus','https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'],['custom','fixture-model','https://compatible.example/v1/chat/completions']];
+ for(const [profile_id,model] of services)provider.set({profile_id,apiKey:'fixture-'+profile_id,model,...(profile_id==='custom'?{base:'https://compatible.example/v1'}:{})});
+ assert.equal(provider.get('gpt').hasKey,false);assert.equal(provider.get('claude').hasKey,false);
+ const app=createApp({store,provider,fetchImpl:async(url,options)=>{
+  const payload=JSON.parse(options.body),service=services.find(([,model])=>model===payload.model);
+  assert.ok(service);assert.equal(url,service[2]);assert.equal(options.headers.Authorization,'Bearer fixture-'+service[0]);
+  assert.equal('response_format' in payload,service[0]!=='custom');
+  calls.push(service[0]);const t=JSON.parse(payload.messages[1].content.slice('仅评阅以下 JSON 数据：\n'.length));
+  return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(report(t))}}]}));
+ }});
+ await new Promise(resolve=>app.listen(0,'127.0.0.1',resolve));const base='http://127.0.0.1:'+app.address().port;
+ try{
+  for(const [profile_id,model] of services){
+   const submitted=store.submit({task:{...task,request_id:'universal-'+profile_id}});
+   const response=await fetch(base+'/api/grade',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({profile_id,submission_id:submitted.id})});
+   assert.equal(response.status,200);const data=await response.json();assert.equal(data.record.model,model);assert.equal(data.record.report.request_id,submitted.id);
+  }
+  assert.deepEqual(calls,['deepseek','qwen','custom']);assert.equal(store.library().history.length,3);
+  provider.clear('qwen');assert.equal(provider.get('qwen').hasKey,false);assert.equal(provider.get('deepseek').hasKey,true);assert.equal(provider.resolve('custom').apiKey,'fixture-custom');
+  assert.ok(!JSON.stringify(store.library()).includes('fixture-custom'));assert.ok(!JSON.stringify(provider.get()).includes('fixture-custom'));
+ }finally{await new Promise(resolve=>app.close(resolve));store.close();}
+});
 test('HTTP grades pin the selected profile and save its model even if another page switches profiles',async()=>{
  const store=createStore(':memory:'),provider=createProviderRegistry();provider.set({profile_id:'gpt',apiKey:'fixture-gpt-key'});provider.set({profile_id:'claude',apiKey:'fixture-claude-key'});
  const first=store.submit({task:{...task,request_id:'profile-pin-gpt'}}),second=store.submit({task:{...task,request_id:'profile-pin-claude'}});const calls=[];

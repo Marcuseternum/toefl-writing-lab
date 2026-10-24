@@ -17,7 +17,7 @@
   function scheduleSave(){if(!ready)return;clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveCurrent().catch(()=>{}),400);API.saved('· 正在保存到本地档案…');}
   async function flush(){clearTimeout(saveTimer);if(conflict)throw new Error('草稿有版本冲突，请先在连接栏选择保留或载入。');return saveCurrent();}
   async function submit({silent=false,reusePending=null}={}){
-    if(!ready)throw new Error('请通过 start.cmd 启动本地服务，再使用“提交给 Codex”。');
+    if(!ready)throw new Error('请通过 start.cmd 启动本地服务，再提交原文。');
     const saved=await flush();if(!saved?.response.trim())throw new Error('请先完成英文作文。');
     if(reusePending&&!reusePending.report&&reusePending.task.task_type===saved.task_type&&reusePending.task.prompt===saved.prompt&&reusePending.task.response===saved.response)return reusePending;
     const result=await request('/api/submit',{draft_key:saved.key,expected_revision:saved.revision});API.pending(result.task);API.localRecord(result);revision=-1;await sync(false);if(!silent)API.notice('原文已提交。在 Codex 聊天中说：“给刚才提交的作文评分”。无需复制 JSON。');return result;
@@ -31,7 +31,7 @@
       API.library(lib);
       const active=lib.active,d=active&&lib.drafts[active.draft_key],present=current();
       if(d&&allowActivate&&d.key!==present.key){clearTimeout(saveTimer);await saveCurrent(false);draftVersions.set(d.key,d.revision);API.activate(d,active);}
-      if(active?.pending_id){const rec=lib.history.find(r=>r.id===active.pending_id);if(rec){API.pending(rec.task);const signature=rec.id+':'+rec.feedback_revision;if(rec.report&&signature!==lastFeedback){lastFeedback=signature;API.feedback(rec);API.notice((rec.method==='api'?'API':'Codex')+' 反馈已自动写回，并保存到本地档案。');}}}
+      if(active?.pending_id){const rec=lib.history.find(r=>r.id===active.pending_id);if(rec&&API.canSyncPending(rec.task)){API.pending(rec.task);const signature=rec.id+':'+rec.feedback_revision;if(rec.report&&signature!==lastFeedback){lastFeedback=signature;API.feedback(rec);API.notice((rec.method==='api'?'API':rec.method==='chat'?'导入的 AI':'Codex / MCP')+' 反馈已自动写回，并保存到本地档案。');}}}
       API.nativeHistoryUpdated();
     }catch(e){API.saved('· 本地连接中断，浏览器草稿仍保留');}finally{polling=false;}
   }
@@ -54,12 +54,12 @@
   }
   async function register(){
     modelContext=document.modelContext||navigator.modelContext;
-    if(typeof modelContext?.registerTool!=='function'){status('本地档案已连接 · 网页工具在此客户端不可用，可使用已配置的 MCP');return;}
-    try{for(const t of window.ToeflToolDefinitions)await modelContext.registerTool({...t,execute:args=>toolExecute(t.name,args||{})});status('Codex 网页工具已连接 · 提交后直接在聊天中说“评分”');}
-    catch(e){status('本地档案已连接 · 网页工具注册失败，可使用 MCP');}
+    if(typeof modelContext?.registerTool!=='function'){status('本地档案已连接 · 草稿与反馈自动保存');return;}
+    try{for(const t of window.ToeflToolDefinitions)await modelContext.registerTool({...t,execute:args=>toolExecute(t.name,args||{})});status('本地档案已连接 · 可选 AI 网页工具已就绪');}
+    catch(e){status('本地档案已连接 · 复制评阅和 API 评分可用');}
   }
   async function initialize(){
-    if(!/^https?:$/.test(location.protocol)){status('文件直开：聊天复制模式 · 原生连接请运行 start.cmd');return;}
+    if(!/^https?:$/.test(location.protocol)){status('文件直开：任意 AI 复制评阅 · 本地档案和 API 请运行 start.cmd');return;}
     try{
       const health=await request('/api/health');if(health.version!==2)throw new Error('请重启 start.cmd，载入新版本地服务。');
       // Existing records are copied, never removed. The server does not overwrite existing archive entries.

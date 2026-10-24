@@ -4,13 +4,14 @@
   const P=window.ToeflProviderDefaults||{base:'https://api.openai.com/v1',model:'gpt-6.1-sol',jsonMode:true};
   const $ = id => document.getElementById(id);
   const STORE = 'toefl-writing-lab-v1';
-  let state = {type:'email', selected:{email:'e1',discussion:'d1'}, nativeKeys:{}, drafts:{}, history:[], archived:[], nativeOutbox:{}, pending:null, preferences:{...P}};
+  let state = {reviewMode:'chat', type:'email', selected:{email:'e1',discussion:'d1'}, nativeKeys:{}, drafts:{}, history:[], archived:[], nativeOutbox:{}, pending:null, preferences:{...P}};
   let nativeMode=false, draftDetails=new Map();
   const openHistoryGroups=new Set();
   let providerHasKey=false,providerBusy=false,serverReady = false,timerHandle = null,remaining = 420,deadline = null,statusHandle;
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
     if (saved && saved.version === 1) {
+      if (['chat','api','codex'].includes(saved.reviewMode))state.reviewMode=saved.reviewMode;
       if (['email','discussion'].includes(saved.type)) state.type = saved.type;
       if (saved.selected && typeof saved.selected === 'object') ['email','discussion'].forEach(type=>{if(typeof saved.selected[type]==='string')state.selected[type]=saved.selected[type];});
       if (saved.drafts && typeof saved.drafts === 'object' && !Array.isArray(saved.drafts)) Object.entries(saved.drafts).forEach(([key,v])=>{if(v && typeof v.prompt==='string'&&typeof v.response==='string'&&v.prompt.length<=C.LIMITS.prompt&&v.response.length<=C.LIMITS.response)state.drafts[key]={prompt:v.prompt,response:v.response};});
@@ -19,7 +20,7 @@
       if (saved.nativeKeys && typeof saved.nativeKeys==='object')state.nativeKeys=saved.nativeKeys;
       if (Array.isArray(saved.archived))state.archived=saved.archived.filter(validRecord);
       if (saved.nativeOutbox && typeof saved.nativeOutbox==='object')state.nativeOutbox=Object.fromEntries(Object.entries(saved.nativeOutbox).filter(([,r])=>validRecord(r)));
-      if (saved.preferences && typeof saved.preferences.base==='string' && typeof saved.preferences.model==='string') state.preferences={base:saved.preferences.base,model:saved.preferences.model,jsonMode:saved.preferences.jsonMode!==false,...(['gpt','claude'].includes(saved.preferences.profile_id)?{profile_id:saved.preferences.profile_id}:{})};
+      if (saved.preferences && typeof saved.preferences.base==='string' && typeof saved.preferences.model==='string') state.preferences={base:saved.preferences.base,model:saved.preferences.model,jsonMode:saved.preferences.jsonMode!==false,...(['gpt','claude','deepseek','qwen','custom'].includes(saved.preferences.profile_id)?{profile_id:saved.preferences.profile_id}:{})};
     }
   } catch { /* A fresh session remains usable when storage is unavailable. */ }
   function id() { return globalThis.crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2); }
@@ -44,7 +45,7 @@
     const preset=$('preset');preset.replaceChildren();
     D.prompts.filter(x=>x.type===state.type).forEach(p=>{const o=node('option',p.title);o.value=p.id;preset.append(o);});
     const custom=node('option','自定义题目 / 粘贴官方练习题');custom.value='custom';preset.append(custom);
-    if(state.nativeKeys[state.type]&&state.drafts[state.nativeKeys[state.type]]){const o=node('option','Codex 当前练习 / 重写');o.value='native';preset.append(o);}
+    if(state.nativeKeys[state.type]&&state.drafts[state.nativeKeys[state.type]]){const o=node('option','当前练习 / 重写');o.value='native';preset.append(o);}
     if(![...preset.options].some(x=>x.value===state.selected[state.type]))state.selected[state.type]=D.prompts.find(x=>x.type===state.type).id;
     preset.value=state.selected[state.type];
     const original=D.prompts.find(x=>x.id===preset.value && x.type===state.type);
@@ -79,10 +80,16 @@
     $('pending-label').textContent=p?`等待导入：${p.task_type==='email'?'邮件':'学术讨论'} · ${C.wordCount(p.response)}词 · ${new Date(p.created_at || Date.now()).toLocaleString('zh-CN')}。导入结果将绑定这次提交时的原文。`:'先复制评分请求，再导入该次结果。工具会核对请求编号和原文引用。';
   }
   function newRequest() {const t=snapshot();state.pending=t;persist();updatePending();return t;}
+  async function scoringRequest() {
+    if(!nativeMode)return newRequest();
+    const reusable=state.history.find(r=>r.id===state.pending?.request_id&&!r.report&&sameText(r.task));
+    const record=await window.ToeflNative.submit({silent:true,reusePending:reusable});
+    return record.task;
+  }
   async function copyRequest() {
     try {
-      const text=C.makePrompt(newRequest());
-      try {await navigator.clipboard.writeText(text);$('prompt-fallback').hidden=true;notice('已复制。把请求发到本聊天，收到 JSON 后粘贴回来。');}
+      const text=C.makePrompt(await scoringRequest());document.querySelector('.manual-feedback').open=true;
+      try {await navigator.clipboard.writeText(text);$('prompt-fallback').hidden=true;notice('已复制。把完整请求发给你使用的 AI（如 DeepSeek、豆包、通义千问），再将返回的 JSON 粘贴到下方。');}
       catch {document.querySelector('.manual-feedback').open=true;$('copy-fallback').value=text;$('prompt-fallback').hidden=false;$('prompt-fallback').open=true;$('copy-fallback').focus();$('copy-fallback').select();notice('浏览器未允许自动复制。下方已展开完整请求，请按 Ctrl+C 手动复制。');}
     } catch(e) {notice(e.message,true);}
   }
@@ -154,7 +161,7 @@
     const host=$('history-list');renderGroups(host,groups);if(!h.length)host.append(node('div','写完第一篇，保存练习或导入评分，它就会出现在这里。','empty'));
   }
   function nativeArchive(id,restore=false){if(nativeMode)window.ToeflNative.archive(id,restore).then(()=>renderHistory()).catch(e=>notice(e.message,true));else{if(restore){const r=state.archived.find(x=>x.id===id);if(r)state.history.unshift(r);state.archived=state.archived.filter(x=>x.id!==id);}else{state.archived.push(state.history.find(r=>r.id===id));state.history=state.history.filter(r=>r.id!==id);}persist();renderHistory();}}
-  function showRecord(rec) {const host=$('record-content');host.replaceChildren();if(rec.report)renderReport(rec,host);else {host.append(node('h2',rec.title),node('h3','题目'),node('p',rec.task.prompt,'report-text'),node('h3','原文'),node('p',rec.task.response,'report-text'));host.append(button('用这篇作文生成评分请求',()=>{state.pending=rec.task;persist();updatePending();$('close-record').click();page('practice');$('copy-fallback').value=C.makePrompt(rec.task);document.querySelector('.manual-feedback').open=true;$('prompt-fallback').hidden=false;$('prompt-fallback').open=true;$('copy-fallback').focus();$('copy-fallback').select();notice('请求已展开，请复制后发到本聊天。');},'secondary'));}$('record-dialog').showModal();}
+  function showRecord(rec) {const host=$('record-content');host.replaceChildren();if(rec.report)renderReport(rec,host);else {host.append(node('h2',rec.title),node('h3','题目'),node('p',rec.task.prompt,'report-text'),node('h3','原文'),node('p',rec.task.response,'report-text'));host.append(button('用这篇作文生成评分请求',()=>{state.pending=rec.task;persist();updatePending();$('close-record').click();page('practice');$('copy-fallback').value=C.makePrompt(rec.task);document.querySelector('.manual-feedback').open=true;$('prompt-fallback').hidden=false;$('prompt-fallback').open=true;$('copy-fallback').focus();$('copy-fallback').select();notice('请求已展开，请复制后发给你使用的 AI。');},'secondary'));}$('record-dialog').showModal();}
   function renderSources() {
     $('rubric-bands').replaceChildren(...C.RUBRIC.bands.map((x,i)=>{const n=node('div',undefined,'band');n.append(node('strong',String(i)),node('span',x.slice(3)));return n;}).reverse());
     $('source-list').replaceChildren(...D.sources.map(x=>{const a=node('a',undefined,'source-item');a.href=x.url;a.target='_blank';a.rel='noopener noreferrer';a.append(node('h3',x.title+' ↗'),node('p',x.note));return a;}));
@@ -173,7 +180,7 @@
     for(const select of [$('practice-provider'),$('api-profile')]){select.replaceChildren(...(data.profiles||[]).map(p=>{const o=node('option',p.name+' · '+p.model+(p.hasKey?'':' · 待配置 Key'));o.value=p.profile_id;return o;}));select.value=data.profile_id;}
     $('api-base').value=data.endpoint;$('api-model').value=data.model;$('api-profile-name').textContent=data.model;$('json-mode').checked=data.jsonMode!==false;$('api-key').value='';$('api-key').placeholder=providerHasKey?'此配置已载入 Key；留空可继续使用':'填写此配置的 Key，仅保留在本机服务内存';persist();updateApiUI();return data;
   }
-  function busyProvider(value){providerBusy=value;for(const id of ['practice-provider','api-profile','api-base','api-model','api-key','json-mode','clear-api-key'])$(id).disabled=value;$('settings-form').querySelector('button[type="submit"]').disabled=value;$('api-grade').disabled=value;}
+  function busyProvider(value){providerBusy=value;for(const id of ['review-mode','practice-provider','api-profile','api-base','api-model','api-key','json-mode','clear-api-key'])$(id).disabled=value;$('settings-form').querySelector('button[type="submit"]').disabled=value;$('api-grade').disabled=value||!serverReady||!providerHasKey;}
   async function switchProvider(profile_id){
     if(providerBusy)return;
     busyProvider(true);
@@ -189,11 +196,19 @@
     }catch(e){notice(e.message,true);}finally{busyProvider(false);}
   }
   function updateApiUI() {
-    const enabled=serverReady&&providerHasKey&&!!state.preferences.model;$('api-grade').hidden=!enabled;$('api-grade').className=enabled?'primary':'secondary';$('submit-codex').className=enabled?'secondary':'primary';$('practice-provider-wrap').hidden=!serverReady;
-    $('mode-label').textContent=enabled?'API 自动评分 · '+state.preferences.model:nativeMode?'Codex 直接评分 · 无需 API Key':'聊天评分 · API 可在设置中配置';
-    $('api-availability').textContent=serverReady?(providerHasKey?'Key 已载入本机服务内存，可点击“API 自动评分”。网页刷新不会清除；服务重启后须重新填写。':'接口与模型已预设；填写 Key 并应用后，可直接在页面评分。'):'请运行 start.cmd，并通过本地地址使用 API 评分。';
-    if($('clear-api-key'))$('clear-api-key').hidden=!providerHasKey;
-    if(nativeMode)document.querySelector('.workflow').textContent=enabled?'写完 → 点击“API 自动评分” → 反馈与原文自动保存':'写完 → 提交给 Codex → 在聊天中说“给刚才的作文评分” → 反馈自动显示';
+    const enabled=serverReady&&providerHasKey&&!!state.preferences.model,mode=state.reviewMode;
+    $('review-mode').value=mode;
+    $('copy-prompt').hidden=mode!=='chat';$('copy-prompt').className='primary';
+    $('api-grade').hidden=mode!=='api';$('api-grade').disabled=providerBusy||!enabled;$('api-grade').className='primary';
+    $('submit-codex').hidden=mode!=='codex';$('submit-codex').disabled=!nativeMode;$('submit-codex').className='primary';
+    $('practice-provider-wrap').hidden=mode!=='api'||!serverReady;
+    $('review-setup').hidden=mode==='chat'||(mode==='api'?enabled:nativeMode);
+    const hints={chat:'无需 API Key。将完整评分请求发给你常用的 AI，再粘贴返回的 JSON。',api:'使用自己的 API Key 自动评分；支持 DeepSeek、通义千问及其他 Chat Completions 兼容服务。',codex:'可选进阶方式：需要本地服务及 Codex 的 MCP 或网页工具连接；提交后在聊天中发起评阅。'};
+    $('review-help').textContent=hints[mode];
+    $('mode-label').textContent=mode==='chat'?'任意 AI 对话 · 无需 API Key':mode==='api'?(enabled?'API 自动评分 · '+state.preferences.model:'API 自动评分 · 待配置'):'Codex / MCP · 可选';
+    $('api-availability').textContent=serverReady?(providerHasKey?'Key 已载入本机服务内存。网页刷新不会清除；服务重启后须重新填写。':'选择服务并填写自己的 Key，再点击“应用设置”。'):'请运行 start.cmd，并通过本地地址使用 API 评分。';
+    $('clear-api-key').hidden=!providerHasKey;
+    document.querySelector('.workflow').textContent=mode==='chat'?'写完 → 复制评分请求到常用 AI → 粘贴 JSON → 导入评分结果':mode==='api'?(enabled?'写完 → 点击“API 自动评分” → 反馈与原文自动保存':'先在 AI 设置填写 API Key → 应用设置 → 返回自动评分'):'写完 → 提交给 Codex → 在聊天中说“给刚才的作文评分” → 反馈自动显示';
   }
   function readDraft(){const detail=draftDetails.get(key());return {key:key(),task_type:state.type,prompt:$('prompt').value,response:$('essay').value,title:detail?.title||$('preset').selectedOptions[0].textContent,parent_id:detail?.parent_id||null,author:detail?.author||'learner'};}
   function activateDraft(d,active={}){
@@ -224,10 +239,12 @@
   $('clear-draft').addEventListener('click',()=>{const old=$('essay').value;if(!old)return;try{saveRecord(makeRecord(snapshot(),null,'saved'));}catch{}$('essay').value='';updateCount();captureDraft();$('feedback').hidden=true;notice('作文已清空；刚才的原稿已保存在练习记录中。');});
   $('copy-prompt').addEventListener('click',copyRequest);$('import-report').addEventListener('click',importReport);$('api-grade').addEventListener('click',apiGrade);
   $('save-attempt').addEventListener('click',()=>{try{saveRecord(makeRecord(snapshot()));notice('练习已保存。你可以稍后从记录中查看或评分。');}catch(e){notice(e.message,true);}});
-  $('download-prompt').addEventListener('click',()=>{try{const t=state.pending&&sameText(state.pending)?state.pending:newRequest();download('TOEFL-scoring-request.txt',C.makePrompt(t));notice('已下载评分请求。请复制其中全文到聊天。');}catch(e){notice(e.message,true);}});
+  $('download-prompt').addEventListener('click',async()=>{try{const t=await scoringRequest();download('TOEFL-scoring-request.txt',C.makePrompt(t));notice('已下载评分请求。请复制其中全文到你使用的 AI 对话。');}catch(e){notice(e.message,true);}});
   $('export-history').addEventListener('click',()=>download('TOEFL-writing-backup.json',JSON.stringify({version:1,exported_at:new Date().toISOString(),history:state.history},null,2),'application/json'));
   $('import-backup').addEventListener('click',()=>$('backup-file').click());$('backup-file').addEventListener('change',async()=>{try{const file=$('backup-file').files[0];if(!file)return;if(file.size>12000000)throw new Error('备份超过12MB，请拆分后导入。');const backup=JSON.parse(await file.text());if(backup.version!==1||!Array.isArray(backup.history)||backup.history.length>300||backup.history.some(x=>!validRecord(x)))throw new Error('备份格式或评分记录无效，请选择本工具导出的记录。');const merged=new Map(state.history.map(x=>[x.id,x]));backup.history.forEach(x=>merged.set(x.id,x));if(merged.size>300)throw new Error('合并后超过300条。请先导出并删除部分当前记录。');state.history=[...merged.values()].sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at));persist();if(nativeMode)await window.ToeflNative.importRecords(backup.history);renderHistory();notice('备份已合并，重复编号的记录已更新。');}catch(e){notice(e.message,true);}finally{$('backup-file').value='';}});
   $('go-sources').addEventListener('click',()=>page('sources'));$('sentence-link').addEventListener('click',()=>{renderSentences();page('sentences');});$('back-writing').addEventListener('click',()=>page('practice'));$('close-record').addEventListener('click',()=>$('record-dialog').close());
+  $('review-mode').addEventListener('change',()=>{state.reviewMode=$('review-mode').value;persist();updateApiUI();document.querySelector('.manual-feedback').open=state.reviewMode==='chat';});
+  $('review-setup').addEventListener('click',()=>page('settings'));
   $('settings-form').addEventListener('submit',applySettings);$('api-base').value=state.preferences.base;$('api-model').value=state.preferences.model;$('json-mode').checked=state.preferences.jsonMode;
   for(const id of ['practice-provider','api-profile'])$(id).addEventListener('change',event=>switchProvider(event.target.value));
   $('clear-api-key').addEventListener('click',async()=>{if(providerBusy)return;busyProvider(true);try{const response=await fetch('/api/provider?profile_id='+encodeURIComponent(state.preferences.profile_id),{method:'DELETE'});const data=await response.json();if(!response.ok)throw new Error(data.error||'清除失败。');showProvider(data);notice('已清除此模型配置的 Key，其他配置仍保留。');}catch(e){notice(e.message,true);}finally{busyProvider(false);}});
@@ -240,15 +257,16 @@
     showConflict:()=>{$('draft-conflict').hidden=false;},hideConflict:()=>{$('draft-conflict').hidden=true;},
     backupConflict:d=>{state.drafts['conflict-'+id()]={prompt:d.prompt,response:d.response};persist();},
     legacy:()=>({history:state.history,drafts:Object.fromEntries(Object.entries(state.drafts).filter(([k])=>/^(email|discussion):/.test(k)))}),
+    canSyncPending:t=>state.reviewMode!=='chat'||!state.pending||state.pending.request_id===t.request_id,
     pending:t=>{state.pending=t;updatePending();persist();},
     library:lib=>{state.history=[...lib.history,...Object.values(state.nativeOutbox).filter(r=>!lib.history.some(x=>x.id===r.id))];state.archived=lib.archived;for(const[k,d]of Object.entries(lib.drafts)){draftDetails.set(k,d);if(!state.drafts[k])state.drafts[k]={prompt:d.prompt,response:d.response};}persist();},
     nativeHistoryUpdated:()=>{if(!$('history').hidden)renderHistory();},
     feedback:rec=>{renderReport(rec,$('feedback'));$('feedback').hidden=false;},
-    nativeReady:()=>{nativeMode=true;$('submit-codex').hidden=false;updateApiUI();Object.values(state.nativeOutbox).forEach(r=>window.ToeflNative.storeRecord(r).catch(e=>notice(e.message,true)));}
+    nativeReady:()=>{nativeMode=true;updateApiUI();Object.values(state.nativeOutbox).forEach(r=>window.ToeflNative.storeRecord(r).catch(e=>notice(e.message,true)));}
   };
   $('submit-codex').addEventListener('click',async()=>{const b=$('submit-codex');b.disabled=true;try{await window.ToeflNative.submit();}catch(e){notice(e.message,true);}finally{b.disabled=false;}});
   $('keep-local-draft').addEventListener('click',()=>window.ToeflNative.resolveConflict(true).catch(e=>notice(e.message,true)));
   $('load-remote-draft').addEventListener('click',()=>window.ToeflNative.resolveConflict(false).catch(e=>notice(e.message,true)));
-  renderSources();fillTask();updateApiUI();
+  renderSources();fillTask();updateApiUI();document.querySelector('.manual-feedback').open=state.reviewMode==='chat';
   if(/^https?:$/.test(location.protocol))fetch('/api/health',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(async x=>{serverReady=x.app==='toefl-writing-lab';updateApiUI();if(serverReady)await loadProvider();}).catch(()=>{});
 })();

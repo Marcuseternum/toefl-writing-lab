@@ -31,8 +31,13 @@ export function createProviderRegistry(){
     ['gpt',{name:'GPT',session:createProviderSession()}],
     ['claude',{name:'Claude',session:createProviderSession({base:'https://api.example.com/v1',model:'claude-opus-5.5',jsonMode:true})}]
   ]);
+  for(const [id,name,config] of [
+    ['deepseek','DeepSeek',{base:'https://api.deepseek.com/v1',model:'deepseek-chat',jsonMode:true}],
+    ['qwen','通义千问',{base:'https://dashscope.aliyuncs.com/compatible-mode/v1',model:'qwen-plus',jsonMode:true}],
+    ['custom','自定义兼容服务',{base:'https://api.example.com/v1',model:'your-model-id',jsonMode:false}]
+  ])profiles.set(id,{name,session:createProviderSession(config)});
   let active='gpt';
-  function profile(id=active){const value=profiles.get(id);if(!value)throw new Error('未知的 API 配置，请选择 GPT 或 Claude。');return value;}
+  function profile(id=active){const value=profiles.get(id);if(!value)throw new Error('未知的 API 配置，请从列表中选择服务。');return value;}
   function get(id=active){return {...profile(id).session.get(),profile_id:id,active_profile:active,profiles:[...profiles].map(([profile_id,p])=>({profile_id,name:p.name,...p.session.get()}))};}
   function set(input){
     if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('连接设置格式无效。');

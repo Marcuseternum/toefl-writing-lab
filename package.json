@@ -2,7 +2,7 @@
   "name": "toefl-writing-lab",
   "version": "0.2.0",
   "private": true,
-  "description": "Local TOEFL 2026 email and academic discussion practice with traceable AI feedback and Codex MCP.",
+  "description": "Local TOEFL 2026 writing practice with any AI chat, configurable API scoring, and optional Codex MCP.",
   "license": "MIT",
   "engines": {
     "node": ">=22.13.0"
