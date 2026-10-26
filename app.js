@@ -37,7 +37,7 @@
     if (!$(name)?.classList.contains('page')) return;
     if (!$('practice').hidden) captureDraft();
     document.querySelectorAll('.page').forEach(n=>n.hidden=n.id!==name);
-    document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===name));
+    document.querySelectorAll('.nav').forEach(n=>{n.classList.toggle('active',n.dataset.page===name);n.setAttribute('aria-current',n.dataset.page===name?'page':'false');});
     if(name==='history')renderHistory();
     window.scrollTo({top:0,behavior:'smooth'});
   }
@@ -52,7 +52,7 @@
     const draft=state.drafts[key()] || {prompt:original?.prompt || '',response:''};
     $('prompt').value=draft.prompt;$('essay').value=draft.response;
     document.querySelector('.prompt-card .badge').textContent=original?(draft.prompt===original.prompt?'原创模拟题':'已编辑题目'):'自定义题目';
-    document.querySelectorAll('[data-type]').forEach(n=>n.classList.toggle('active',n.dataset.type===state.type));
+    document.querySelectorAll('[data-type]').forEach(n=>{n.classList.toggle('active',n.dataset.type===state.type);n.setAttribute('aria-pressed',String(n.dataset.type===state.type));});
     $('feedback').hidden=true;
     const hints=state.type==='email'?['先确定写给谁、为什么写，以及希望对方做什么。','逐项覆盖题目要求，用必要细节使请求可以执行。','根据关系选择语气，给自己留一点检查时间。']:['先回应教授的问题，提出清楚的立场。','用理由、细节或例子展开，增加自己的贡献。','与现有讨论保持相关；无需逐个回应同学。'];
     $('checklist').replaceChildren(...hints.map(x=>node('li',x)));
@@ -118,16 +118,16 @@
     if(rec.author==='ai')info.append(node('p','该提交标记为 AI 改写，不能作为本人独立写作能力的证明。','small'));
     const toolbar=node('div',undefined,'report-toolbar');toolbar.append(button('导出反馈 Markdown',()=>download('TOEFL-feedback-'+rec.id.slice(0,8)+'.md',reportMarkdown(rec))),button('将改写放入练习区',()=>{if($('record-dialog').open)$('record-dialog').close();newRevision(rec,true);}));host.append(toolbar);
     const grid=node('div',undefined,'feedback-grid'),diag=card('四个诊断维度'),coverage=card('任务要求逐项检查');
-    r.dimensions.forEach(x=>{const s=node('div',undefined,'diagnostic'),head=node('div',undefined,'diagnostic-title');head.append(node('span',x.name),node('span',LEVELS[x.level],'badge'));s.append(head,node('p',x.feedback));if(x.evidence)s.append(quote(x.evidence));diag.append(s);});
+    r.dimensions.forEach(x=>{const s=node('div',undefined,'diagnostic'),head=node('div',undefined,'diagnostic-title');head.append(node('span',x.name),node('span',LEVELS[x.level],'badge level-'+x.level));s.append(head,node('p',x.feedback));if(x.evidence)s.append(quote(x.evidence));diag.append(s);});
     diag.append(node('p','诊断等级不单独计分，也不按权重平均。','small'));
-    r.coverage.forEach(x=>{const s=node('div',undefined,'diagnostic'),head=node('div',undefined,'diagnostic-title');head.append(node('span',x.requirement),node('span',LEVELS[x.status],'badge'));s.append(head,node('p',x.feedback));if(x.evidence)s.append(quote(x.evidence));coverage.append(s);});grid.append(diag,coverage);host.append(grid);
+    r.coverage.forEach(x=>{const s=node('div',undefined,'diagnostic'),head=node('div',undefined,'diagnostic-title');head.append(node('span',x.requirement),node('span',LEVELS[x.status],'badge level-'+x.status));s.append(head,node('p',x.feedback));if(x.evidence)s.append(quote(x.evidence));coverage.append(s);});grid.append(diag,coverage);host.append(grid);
     const issues=card('把修改落到具体句子');if(!r.issues.length)issues.append(node('p','本次评阅没有指出需要纠正的局部语言问题。'));
     r.issues.forEach((x,i)=>{const s=node('div',undefined,'diagnostic');s.append(node('div',`${i+1}. ${KINDS[x.kind]} · ${LEVELS[x.severity]}`,'diagnostic-title'),quote(x.quote),node('div','→ '+x.correction,'correction'),node('p',x.explanation));issues.append(s);});host.append(issues);
     const nextGrid=node('div',undefined,'feedback-grid'),strengths=card('值得保留的表达'),priorities=card('下一次，只练这些');
     if(!r.strengths.length)strengths.append(node('p','先把任务要求表达完整，再积累可以复用的好表达。'));
     r.strengths.forEach(x=>{strengths.append(quote(x.quote),node('p',x.explanation));});
     r.priorities.forEach((x,i)=>{const s=node('div',undefined,'diagnostic');s.append(node('h3',`${i+1}. ${x.action}`),node('p',x.drill));priorities.append(s);});nextGrid.append(strengths,priorities);host.append(nextGrid);
-    const rewrite=card('保留你的观点，试着这样写');rewrite.append(node('p',`这份示范 ${C.wordCount(r.revised_response)} 词${t.task_type==='email'?' · 邮件改写训练目标 140–150 词':''}`,'small'),node('p',r.revised_response,'report-text'),node('p','这是 AI 修改示例，没有 ETS 认证分数。不要直接把改写当成原作文的评分依据。','small'));host.append(rewrite);
+    const rewrite=card('保留你的观点，试着这样写');rewrite.classList.add('rewrite-card');rewrite.append(node('p',`这份示范 ${C.wordCount(r.revised_response)} 词${t.task_type==='email'?' · 邮件改写训练目标 140–150 词':''}`,'small'),node('p',r.revised_response,'report-text'),node('p','这是 AI 修改示例，没有 ETS 认证分数。不要直接把改写当成原作文的评分依据。','small'));host.append(rewrite);
     const original=card('评分对应的原始提交');const details=node('details');details.append(node('summary','展开完整题目与原文'),node('h3','题目'),node('p',t.prompt,'report-text'),node('h3','原文'),node('p',t.response,'report-text'));original.append(details);host.append(original);
   }
   function reportMarkdown(rec) {
@@ -224,12 +224,12 @@
   async function apiGrade() {
     if(providerBusy)return;const btn=$('api-grade'),selected={...state.preferences};try {
       if(!serverReady||!providerHasKey)throw new Error('请先在 AI 设置中配置 API Key。');
-      busyProvider(true);btn.textContent='正在评阅…';
+      busyProvider(true);document.querySelector('.editor-card').classList.add('is-grading');btn.setAttribute('aria-busy','true');btn.textContent='正在评阅…';
       const reusable=state.history.find(r=>r.id===state.pending?.request_id&&!r.report&&sameText(r.task));
       const submitted=nativeMode?await window.ToeflNative.submit({silent:true,reusePending:reusable}):null,t=submitted?.task||(state.pending&&sameText(state.pending)?state.pending:newRequest());notice('正在通过 '+selected.model+' 评阅，请稍候。',false,true);
       const response=await fetch('/api/grade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...(submitted?{submission_id:submitted.id}:{task:t}),profile_id:selected.profile_id}),signal:AbortSignal.timeout(195000)});
       const result=await response.json();if(!response.ok)throw new Error(result.error||'评分请求失败');const report=C.validateReport(result.report,t),rec=result.record||makeRecord(t,report,'api',result.requested_model||selected.model);if(result.record)localRecord(rec);else saveRecord(rec);renderReport(rec,$('feedback'));$('feedback').hidden=false;notice('API 评分已完成，原文和反馈已保存。');$('feedback').scrollIntoView({behavior:'smooth',block:'start'});
-    }catch(e){notice(e.name==='TimeoutError'?'请求超时，原稿仍保留；可以稍后重试。':e.message,true,true);}finally{busyProvider(false);btn.textContent='API 自动评分';}
+    }catch(e){notice(e.name==='TimeoutError'?'请求超时，原稿仍保留；可以稍后重试。':e.message,true,true);}finally{busyProvider(false);document.querySelector('.editor-card').classList.remove('is-grading');btn.setAttribute('aria-busy','false');btn.textContent='API 自动评分';}
   }
   document.querySelectorAll('[data-page]').forEach(n=>n.addEventListener('click',()=>page(n.dataset.page)));
   document.querySelectorAll('[data-type]').forEach(n=>n.addEventListener('click',()=>{if(n.dataset.type===state.type)return;captureDraft();state.type=n.dataset.type;fillTask();}));
